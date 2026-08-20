@@ -1,3 +1,5 @@
+<img width="1527" height="1141" alt="sample1" src="https://github.com/user-attachments/assets/9229d810-def3-4a81-beb4-fddae7881223" />
+
 # Meme Editor for Vencord
 
 Discord の画像添付を右クリックして、簡易 meme 編集画面を開く Vencord userplugin です。
