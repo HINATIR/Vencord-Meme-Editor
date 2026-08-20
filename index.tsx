@@ -8,7 +8,7 @@ import { Devs } from "@utils/constants";
 import definePlugin from "@utils/types";
 import { ModalCloseButton, ModalContent, ModalFooter, ModalHeader, ModalRoot, ModalSize, openModal } from "@utils/modal";
 import { findByPropsLazy } from "@webpack";
-import { Button, ChannelStore, ContextMenuApi, FluxDispatcher, Forms, Menu, React, SelectedChannelStore, UserStore } from "@webpack/common";
+import { Button, ChannelStore, FluxDispatcher, Forms, Menu, React, SelectedChannelStore, UserStore } from "@webpack/common";
 
 type AnyMessage = {
     guild_id?: string;
@@ -18,7 +18,7 @@ type AnyMessage = {
 };
 
 type Layer =
-    | { id: string; type: "text"; label: string; value: string; x: number; y: number; scale: number; rotation: number; color: string; fontSize: number; }
+    | { id: string; type: "text"; label: string; value: string; x: number; y: number; scale: number; rotation: number; color: string; fontSize: number; fontFamily: string; }
     | { id: string; type: "avatar"; label: string; value: string; image: HTMLImageElement; x: number; y: number; scale: number; rotation: number; size: number; shape: "circle" | "square"; };
 
 type GuildUser = { id: string; name: string; username: string; handle: string; nick?: string; avatar: string; };
@@ -27,7 +27,19 @@ type HandleName = "delete" | "scale" | "rotate";
 
 const GuildMemberStore = findByPropsLazy("getMember", "getMembers");
 const MAX_UPLOAD_BYTES = 9.5 * 1024 * 1024;
+const FONT_OPTIONS = [
+    { label: "Impact", value: 'Impact, "Arial Black", sans-serif' },
+    { label: "Arial Black", value: '"Arial Black", Arial, sans-serif' },
+    { label: "Arial", value: "Arial, sans-serif" },
+    { label: "Discord Sans", value: '"gg sans", "Noto Sans", sans-serif' },
+    { label: "Japanese Gothic", value: '"Noto Sans CJK JP", "Yu Gothic", Meiryo, sans-serif' },
+    { label: "Japanese Mincho", value: '"Yu Mincho", "Hiragino Mincho ProN", serif' },
+    { label: "Serif", value: "Georgia, serif" },
+    { label: "Monospace", value: '"Consolas", "Courier New", monospace' }
+];
 let imageContextMenuListener: ((event: MouseEvent) => void) | undefined;
+let imageClickListener: ((event: MouseEvent) => void) | undefined;
+let lastRightClickedImage: { url: string; guildId?: string; time: number; } | undefined;
 
 function getImageUrl(message?: AnyMessage) {
     const attachment = message?.attachments?.find(a => {
@@ -60,7 +72,15 @@ function loadImage(src: string) {
 function getGuildId(message?: AnyMessage) {
     if (message?.guild_id) return message.guild_id;
     if (message?.channel_id) return ChannelStore.getChannel(message.channel_id)?.guild_id;
-    return SelectedChannelStore.getGuildId?.();
+    return getSelectedGuildId();
+}
+
+function getSelectedGuildId() {
+    const directGuildId = SelectedChannelStore.getGuildId?.();
+    if (directGuildId) return directGuildId;
+
+    const channelId = SelectedChannelStore.getChannelId?.();
+    return channelId ? ChannelStore.getChannel(channelId)?.guild_id : undefined;
 }
 
 function userToGuildUser(user: any, guildId?: string, nick?: string): GuildUser | null {
@@ -71,9 +91,7 @@ function userToGuildUser(user: any, guildId?: string, nick?: string): GuildUser 
         id: user.id,
         name: nick ?? user.globalName ?? username,
         username,
-        handle: user.discriminator && user.discriminator !== "0"
-            ? `${username}#${user.discriminator}`
-            : `@${username}`,
+        handle: `${user.discriminator && user.discriminator !== "0" ? `${username}#${user.discriminator}` : username} (${user.id})`,
         nick,
         avatar: user.getAvatarURL?.(guildId, 256, true) ?? user.getAvatarURL?.(undefined, 256, true)
     };
@@ -157,7 +175,7 @@ function getTextWidth(layer: Extract<Layer, { type: "text"; }>, ctx?: CanvasRend
     if (!measuringContext) return layer.value.length * layer.fontSize * layer.scale * 0.58;
 
     const fontSize = layer.fontSize * layer.scale;
-    measuringContext.font = `900 ${fontSize}px Impact, "Arial Black", sans-serif`;
+    measuringContext.font = `900 ${fontSize}px ${layer.fontFamily}`;
     return measuringContext.measureText(layer.value).width;
 }
 
@@ -250,7 +268,7 @@ function MemeEditorModal({ imageUrl, guildId, modalProps }: { imageUrl: string; 
                 ctx.drawImage(layer.image, -size / 2, -size / 2, size, size);
             } else {
                 const fontSize = layer.fontSize * layer.scale;
-                ctx.font = `900 ${fontSize}px Impact, "Arial Black", sans-serif`;
+                ctx.font = `900 ${fontSize}px ${layer.fontFamily}`;
                 ctx.textAlign = "center";
                 ctx.textBaseline = "middle";
                 ctx.lineJoin = "round";
@@ -320,7 +338,8 @@ function MemeEditorModal({ imageUrl, guildId, modalProps }: { imageUrl: string; 
             scale: 1,
             rotation: 0,
             color: "#ffffff",
-            fontSize: 54
+            fontSize: 54,
+            fontFamily: FONT_OPTIONS[0].value
         }]);
         setSelectedId(id);
     }
@@ -567,6 +586,11 @@ function MemeEditorModal({ imageUrl, guildId, modalProps }: { imageUrl: string; 
                                 {selected.type !== "avatar" && (
                                     <>
                                         <input className="vc-meme-editor-input" value={selected.value} onChange={e => updateSelected({ value: e.currentTarget.value, label: e.currentTarget.value || "Text" })} />
+                                        <select className="vc-meme-editor-select" value={selected.fontFamily} onChange={e => updateSelected({ fontFamily: e.currentTarget.value })}>
+                                            {FONT_OPTIONS.map(font => (
+                                                <option key={font.value} value={font.value}>{font.label}</option>
+                                            ))}
+                                        </select>
                                         <input className="vc-meme-editor-input" type="color" value={selected.color} onChange={e => updateSelected({ color: e.currentTarget.value })} />
                                     </>
                                 )}
@@ -601,13 +625,25 @@ function openEditor(imageUrl: string, guildId?: string) {
     openModal(modalProps => <MemeEditorModal imageUrl={imageUrl} guildId={guildId} modalProps={modalProps} />);
 }
 
-function getTargetImageUrl(target: EventTarget | null) {
+function getTargetImageUrl(target: EventTarget | null, allowModalImage = false) {
     if (!(target instanceof Element)) return undefined;
 
     const image = target.closest("img") as HTMLImageElement | null;
-    if (!image) return undefined;
+    const mediaElement = image ?? target.closest("a[href], [src], [href]");
+    if (!mediaElement) return undefined;
+    const isModalImage =
+        mediaElement.closest(".vc-meme-editor-modal")
+        || mediaElement.closest("[class*=\"imageModal\"]")
+        || mediaElement.closest("[class*=\"modalCarousel\"]")
+        || mediaElement.closest("[class*=\"modalRoot\"]")
+        || mediaElement.closest("[role=\"dialog\"]");
 
-    const src = image.currentSrc || image.src;
+    if (isModalImage && !allowModalImage) return undefined;
+
+    const src = image?.currentSrc
+        || image?.src
+        || mediaElement.getAttribute("src")
+        || mediaElement.getAttribute("href");
     if (!src) return undefined;
 
     try {
@@ -624,28 +660,46 @@ function getTargetImageUrl(target: EventTarget | null) {
     }
 }
 
+function rememberTargetImage(target: EventTarget | null, allowModalImage = false) {
+    const imageUrl = getTargetImageUrl(target, allowModalImage);
+    if (!imageUrl) return;
+
+    lastRightClickedImage = {
+        url: imageUrl,
+        guildId: getSelectedGuildId(),
+        time: Date.now()
+    };
+}
+
 function imageContextMenuPatch(children: React.ReactNode[], props: any) {
     const imageUrl = props?.src ?? props?.href ?? props?.url ?? props?.mediaUrl;
     if (!imageUrl) return;
+    const guildId = lastRightClickedImage && Date.now() - lastRightClickedImage.time < 3000
+        ? lastRightClickedImage.guildId
+        : getSelectedGuildId();
 
     children.push(
         <Menu.MenuItem
             id="vc-meme-editor-open-image"
             label="Meme Editor"
-            action={() => openEditor(imageUrl, SelectedChannelStore.getGuildId?.())}
+            action={() => openEditor(imageUrl, guildId)}
         />
     );
 }
 
 function messageContextMenuPatch(children: React.ReactNode[], props: any) {
-    const imageUrl = getImageUrl(props?.message);
+    const recentImageUrl = lastRightClickedImage && Date.now() - lastRightClickedImage.time < 1500
+        ? lastRightClickedImage.url
+        : undefined;
+    const imageUrl = recentImageUrl ?? getImageUrl(props?.message);
+    const guildId = getGuildId(props?.message) ?? lastRightClickedImage?.guildId;
     if (!imageUrl) return;
 
     children.push(
         <Menu.MenuItem
             id="vc-meme-editor-open-message"
             label="Meme Editor"
-            action={() => openEditor(imageUrl, getGuildId(props?.message))}
+            action={() => openEditor(imageUrl, guildId)}
         />
     );
 }
@@ -657,30 +711,25 @@ export default definePlugin({
 
     start() {
         imageContextMenuListener = (event: MouseEvent) => {
-            const imageUrl = getTargetImageUrl(event.target);
-            if (!imageUrl) return;
+            rememberTargetImage(event.target, true);
+        };
 
-            event.preventDefault();
-            event.stopPropagation();
-
-            ContextMenuApi.openContextMenu(event as any, props => (
-                <Menu.Menu navId="vc-meme-editor-image-context" onClose={props.onClose}>
-                    <Menu.MenuItem
-                        id="vc-meme-editor-open-dom-image"
-                        label="Meme Editor"
-                        action={() => openEditor(imageUrl, SelectedChannelStore.getGuildId?.())}
-                    />
-                </Menu.Menu>
-            ));
+        imageClickListener = (event: MouseEvent) => {
+            rememberTargetImage(event.target, false);
         };
 
         document.addEventListener("contextmenu", imageContextMenuListener, true);
+        document.addEventListener("click", imageClickListener, true);
     },
 
     stop() {
         if (imageContextMenuListener) {
             document.removeEventListener("contextmenu", imageContextMenuListener, true);
             imageContextMenuListener = undefined;
+        }
+        if (imageClickListener) {
+            document.removeEventListener("click", imageClickListener, true);
+            imageClickListener = undefined;
         }
     },
 
