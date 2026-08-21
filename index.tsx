@@ -39,7 +39,7 @@ const FONT_OPTIONS = [
 ];
 let imageContextMenuListener: ((event: MouseEvent) => void) | undefined;
 let imageClickListener: ((event: MouseEvent) => void) | undefined;
-let lastRightClickedImage: { url: string; guildId?: string; time: number; } | undefined;
+let lastRightClickedImage: { url: string; guildId?: string; channelId?: string; time: number; } | undefined;
 
 function getImageUrl(message?: AnyMessage) {
     const attachment = message?.attachments?.find(a => {
@@ -75,12 +75,20 @@ function getGuildId(message?: AnyMessage) {
     return getSelectedGuildId();
 }
 
+function getChannelId(message?: AnyMessage) {
+    return message?.channel_id ?? getSelectedChannelId();
+}
+
 function getSelectedGuildId() {
     const directGuildId = SelectedChannelStore.getGuildId?.();
     if (directGuildId) return directGuildId;
 
-    const channelId = SelectedChannelStore.getChannelId?.();
+    const channelId = getSelectedChannelId();
     return channelId ? ChannelStore.getChannel(channelId)?.guild_id : undefined;
+}
+
+function getSelectedChannelId() {
+    return SelectedChannelStore.getChannelId?.();
 }
 
 function userToGuildUser(user: any, guildId?: string, nick?: string): GuildUser | null {
@@ -107,6 +115,31 @@ function getGuildUsers(guildId?: string) {
             return userToGuildUser(user, guildId, member.nick);
         })
         .filter(Boolean) as GuildUser[];
+}
+
+function getDmUsers(channelId?: string) {
+    if (!channelId) return [];
+
+    const channel = ChannelStore.getChannel(channelId) as any;
+    if (!channel) return [];
+
+    const recipientIds = new Set<string>();
+    for (const id of channel.recipients ?? []) recipientIds.add(id);
+    if (channel.recipientId) recipientIds.add(channel.recipientId);
+    for (const recipient of channel.rawRecipients ?? []) {
+        if (recipient?.id) recipientIds.add(recipient.id);
+    }
+
+    const users = [...recipientIds]
+        .map(id => userToGuildUser(UserStore.getUser(id), undefined))
+        .filter(Boolean) as GuildUser[];
+
+    const currentUser = userToGuildUser(UserStore.getCurrentUser?.(), undefined);
+    return currentUser ? [currentUser, ...users.filter(user => user.id !== currentUser.id)] : users;
+}
+
+function getContextUsers(guildId?: string, channelId?: string) {
+    return guildId ? getGuildUsers(guildId) : getDmUsers(channelId);
 }
 
 function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number) {
@@ -210,7 +243,7 @@ function getHandlePositions(layer: Layer) {
     };
 }
 
-function MemeEditorModal({ imageUrl, guildId, modalProps }: { imageUrl: string; guildId?: string; modalProps: any; }) {
+function MemeEditorModal({ imageUrl, guildId, channelId, modalProps }: { imageUrl: string; guildId?: string; channelId?: string; modalProps: any; }) {
     const canvasRef = React.useRef<HTMLCanvasElement>(null);
     const stageInnerRef = React.useRef<HTMLDivElement>(null);
     const baseImageRef = React.useRef<HTMLImageElement | null>(null);
@@ -225,7 +258,7 @@ function MemeEditorModal({ imageUrl, guildId, modalProps }: { imageUrl: string; 
     const [layers, setLayers] = React.useState<Layer[]>([]);
     const [selectedId, setSelectedId] = React.useState<string | null>(null);
     const [userQuery, setUserQuery] = React.useState("");
-    const [users, setUsers] = React.useState(() => getGuildUsers(guildId));
+    const [users, setUsers] = React.useState(() => getContextUsers(guildId, channelId));
     const selected = layers.find(layer => layer.id === selectedId);
     const filteredUsers = React.useMemo(() => {
         const query = userQuery.trim().toLowerCase();
@@ -303,11 +336,14 @@ function MemeEditorModal({ imageUrl, guildId, modalProps }: { imageUrl: string; 
     React.useEffect(() => renderCanvas(), [renderCanvas, ready]);
 
     React.useEffect(() => {
-        if (!guildId) return;
+        if (!guildId) {
+            setUsers(getContextUsers(undefined, channelId));
+            return;
+        }
 
         const query = userQuery.trim();
         if (!query) {
-            setUsers(getGuildUsers(guildId));
+            setUsers(getContextUsers(guildId, channelId));
             return;
         }
 
@@ -316,11 +352,11 @@ function MemeEditorModal({ imageUrl, guildId, modalProps }: { imageUrl: string; 
                 ? { type: "GUILD_MEMBERS_REQUEST", guildIds: [guildId], userIds: [query] }
                 : { type: "GUILD_MEMBERS_REQUEST", guildIds: [guildId], query, limit: 25 });
 
-            window.setTimeout(() => setUsers(getGuildUsers(guildId)), 700);
+            window.setTimeout(() => setUsers(getContextUsers(guildId, channelId)), 700);
         }, 250);
 
         return () => window.clearTimeout(timeout);
-    }, [guildId, userQuery]);
+    }, [guildId, channelId, userQuery]);
 
     function addTextLayer() {
         const canvas = canvasRef.current;
@@ -537,7 +573,7 @@ function MemeEditorModal({ imageUrl, guildId, modalProps }: { imageUrl: string; 
                             <Button onClick={addTextLayer}>Add Text</Button>
                         </div>
                         <div className="vc-meme-editor-row">
-                            <span className="vc-meme-editor-label">Server Icon</span>
+                            <span className="vc-meme-editor-label">User Icon</span>
                             <input className="vc-meme-editor-input" value={userQuery} placeholder="name / @username / numeric ID" onChange={e => setUserQuery(e.currentTarget.value)} />
                             <div className="vc-meme-editor-user-list">
                                 {filteredUsers.length === 0 && <div className="vc-meme-editor-empty">No cached users found</div>}
@@ -621,8 +657,8 @@ function MemeEditorModal({ imageUrl, guildId, modalProps }: { imageUrl: string; 
     );
 }
 
-function openEditor(imageUrl: string, guildId?: string) {
-    openModal(modalProps => <MemeEditorModal imageUrl={imageUrl} guildId={guildId} modalProps={modalProps} />);
+function openEditor(imageUrl: string, guildId?: string, channelId?: string) {
+    openModal(modalProps => <MemeEditorModal imageUrl={imageUrl} guildId={guildId} channelId={channelId} modalProps={modalProps} />);
 }
 
 function getTargetImageUrl(target: EventTarget | null, allowModalImage = false) {
@@ -667,6 +703,7 @@ function rememberTargetImage(target: EventTarget | null, allowModalImage = false
     lastRightClickedImage = {
         url: imageUrl,
         guildId: getSelectedGuildId(),
+        channelId: getSelectedChannelId(),
         time: Date.now()
     };
 }
@@ -677,12 +714,15 @@ function imageContextMenuPatch(children: React.ReactNode[], props: any) {
     const guildId = lastRightClickedImage && Date.now() - lastRightClickedImage.time < 3000
         ? lastRightClickedImage.guildId
         : getSelectedGuildId();
+    const channelId = lastRightClickedImage && Date.now() - lastRightClickedImage.time < 3000
+        ? lastRightClickedImage.channelId
+        : getSelectedChannelId();
 
     children.push(
         <Menu.MenuItem
             id="vc-meme-editor-open-image"
             label="Meme Editor"
-            action={() => openEditor(imageUrl, guildId)}
+            action={() => openEditor(imageUrl, guildId, channelId)}
         />
     );
 }
@@ -693,13 +733,14 @@ function messageContextMenuPatch(children: React.ReactNode[], props: any) {
         : undefined;
     const imageUrl = recentImageUrl ?? getImageUrl(props?.message);
     const guildId = getGuildId(props?.message) ?? lastRightClickedImage?.guildId;
+    const channelId = getChannelId(props?.message) ?? lastRightClickedImage?.channelId;
     if (!imageUrl) return;
 
     children.push(
         <Menu.MenuItem
             id="vc-meme-editor-open-message"
             label="Meme Editor"
-            action={() => openEditor(imageUrl, guildId)}
+            action={() => openEditor(imageUrl, guildId, channelId)}
         />
     );
 }

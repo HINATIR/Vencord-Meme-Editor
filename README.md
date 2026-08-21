@@ -2,31 +2,33 @@
 
 # Meme Editor for Vencord
 
-Discord の画像添付を右クリックして、簡易 meme 編集画面を開く Vencord userplugin です。
+以前Discordに存在した機能で、画像にユーザーのアイコンを加えるといった画像編集ができるRemixを再現したVencordプラグインです。  
 
 ## できること
 
-- 画像付きメッセージの右クリックメニューから Meme Editor を開く
-- 任意テキストを追加
+- 画像付きメッセージの右クリックメニューから編集画面を開ける
+- テキストを追加
 - 絵文字を追加
-- サーバー内ユーザーのアイコンを追加
+- ユーザーのアイコンを追加
 - レイヤーの移動、拡大縮小、回転、削除
-- 編集結果を PNG として保存
+- 編集結果をそのまま送信
 
 ## 導入
-
-このフォルダの中身を Vencord の userplugins に配置してください。
-
+自らVencordにこのフォルダーを加えてビルドし直す必要があります。  
+1. [Vencord](https://docs.vencord.dev/installing/) を参照して環境を整えます。  
+2. ./src/userpluginsフォルダを作成します。  
+3. Vencord-Meme-Editorを展開し、そのフォルダーを userplugins に配置してください。  
 例:
 
 ```text
-Vencord/src/userplugins/memeEditor/
+Vencord/src/userplugins/Vencord-Meme-Editor/
   index.tsx
   style.css
   README.md
+  etc...
 ```
 
-その後 Vencord を再ビルドし、設定画面から `Meme Editor` を有効化します。
+4. その後 Vencord をビルドし、設定画面から `Meme Editor` を有効化します。
 
 ```bash
 pnpm build
@@ -34,7 +36,7 @@ pnpm build
 
 ## 使い方
 
-画像が添付されたメッセージを右クリックし、`Meme Editor` を選びます。編集後は `Download PNG` で保存できます。
+画像が添付されたメッセージを右クリックし、`Meme Editor` をクリックして編集画面を開きます。編集後は `Paste to Chat` で送信準備ができます。
 
 ## 注意
 
