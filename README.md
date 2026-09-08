@@ -28,16 +28,9 @@ Vencord/src/userplugins/Vencord-Meme-Editor/
   etc...
 ```
 
-4. その後 Vencord をビルドし、設定画面から `Meme Editor` を有効化します。
+4. その後 Vencord をビルドとインジェクトを行い、設定画面から `Meme Editor` を有効化します。
 
 ```bash
 pnpm build
+pnpm inject
 ```
-
-## 使い方
-
-画像が添付されたメッセージを右クリックし、`Meme Editor` をクリックして編集画面を開きます。編集後は `Paste to Chat` で送信準備ができます。
-
-## 注意
-
-Discord/Vencord の内部 API は更新で変わることがあります。右クリックメニューが出ない場合は、Vencord 側の ContextMenu API 変更に合わせた調整が必要です。

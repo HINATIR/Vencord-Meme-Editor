@@ -183,24 +183,54 @@ async function exportUploadBlob(canvas: HTMLCanvasElement) {
     return { blob: await canvasToBlob(smallest, "image/jpeg", 0.35), filename: "meme-editor.jpg" };
 }
 
+function isVisibleElement(element: HTMLElement) {
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+}
+
+function getChatInput() {
+    const selectors = [
+        "main form [data-slate-editor=\"true\"]",
+        "main form [role=\"textbox\"][contenteditable=\"true\"]",
+        "[class*=\"channelTextArea\"] [data-slate-editor=\"true\"]",
+        "[class*=\"channelTextArea\"] [role=\"textbox\"][contenteditable=\"true\"]",
+        "[data-slate-editor=\"true\"]",
+        "[role=\"textbox\"][contenteditable=\"true\"]",
+        "div[contenteditable=\"true\"]"
+    ];
+
+    for (const selector of selectors) {
+        const input = [...document.querySelectorAll<HTMLElement>(selector)].find(element =>
+            isVisibleElement(element)
+            && !element.closest("[role=\"dialog\"], [class*=\"search\"], [data-list-id=\"search-results\"]")
+        );
+
+        if (input) return input;
+    }
+
+    return undefined;
+}
+
 function focusChatInput() {
-    const input = document.querySelector<HTMLElement>(
-        "[data-slate-editor=\"true\"], [role=\"textbox\"][contenteditable=\"true\"], div[contenteditable=\"true\"]"
-    );
+    const input = getChatInput();
     input?.focus();
+    return input;
 }
 
 async function pasteFileToCurrentChannel(file: File) {
-    focusChatInput();
+    const input = focusChatInput();
 
     const data = new DataTransfer();
     data.items.add(file);
 
-    document.dispatchEvent(new ClipboardEvent("paste", {
+    const pasteEvent = new ClipboardEvent("paste", {
         bubbles: true,
         cancelable: true,
         clipboardData: data
-    }));
+    });
+
+    (input ?? document).dispatchEvent(pasteEvent);
 }
 
 function getTextWidth(layer: Extract<Layer, { type: "text"; }>, ctx?: CanvasRenderingContext2D | null) {
