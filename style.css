@@ -185,11 +185,33 @@
     gap: 8px;
 }
 
+.vc-meme-editor-inline {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+}
+
+.vc-meme-editor-note {
+    color: var(--vc-me-muted);
+    font-size: 11px;
+    line-height: 1.35;
+}
+
+.vc-meme-editor-error {
+    color: #ed4245;
+}
+
 .vc-meme-editor-label {
     color: var(--vc-me-muted);
     font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
+}
+
+.vc-meme-editor-sub-label {
+    color: var(--vc-me-muted);
+    font-size: 11px;
 }
 
 .vc-meme-editor-input,
@@ -202,6 +224,11 @@
     border: 1px solid var(--vc-me-border);
     border-radius: 4px;
     padding: 8px 10px;
+}
+
+.vc-meme-editor-range {
+    width: 100%;
+    accent-color: var(--vc-me-focus);
 }
 
 .vc-meme-editor-input::placeholder {
@@ -233,6 +260,56 @@
     gap: 6px;
     max-height: 190px;
     overflow: auto;
+}
+
+.vc-meme-editor-asset-list {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    max-height: 220px;
+    overflow: auto;
+}
+
+.vc-meme-editor-asset {
+    appearance: none;
+    display: grid;
+    justify-items: center;
+    gap: 3px;
+    min-width: 0;
+    padding: 6px 3px;
+    color: var(--vc-me-text) !important;
+    background: var(--vc-me-surface) !important;
+    border: 1px solid var(--vc-me-border);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.vc-meme-editor-asset:hover {
+    background: var(--vc-me-surface-hover) !important;
+    border-color: var(--vc-me-focus);
+}
+
+.vc-meme-editor-asset img {
+    width: 42px;
+    height: 42px;
+    object-fit: contain;
+}
+
+.vc-meme-editor-asset span,
+.vc-meme-editor-asset small {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vc-meme-editor-asset span {
+    font-size: 11px;
+}
+
+.vc-meme-editor-asset small {
+    color: var(--vc-me-muted);
+    font-size: 9px;
 }
 
 .vc-meme-editor-layer {

@@ -4,11 +4,13 @@
 
 import "./style.css";
 
+import { Button } from "@components/Button";
+import { Heading } from "@components/Heading";
 import { Devs } from "@utils/constants";
 import definePlugin from "@utils/types";
 import { ModalCloseButton, ModalContent, ModalFooter, ModalHeader, ModalRoot, ModalSize, openModal } from "@utils/modal";
 import { findByPropsLazy } from "@webpack";
-import { Button, ChannelStore, FluxDispatcher, Forms, Menu, React, SelectedChannelStore, UserStore } from "@webpack/common";
+import { ChannelStore, FluxDispatcher, GuildStore, Menu, React, RestAPI, SelectedChannelStore, UserStore } from "@webpack/common";
 
 type AnyMessage = {
     guild_id?: string;
@@ -18,14 +20,17 @@ type AnyMessage = {
 };
 
 type Layer =
-    | { id: string; type: "text"; label: string; value: string; x: number; y: number; scale: number; rotation: number; color: string; fontSize: number; fontFamily: string; }
-    | { id: string; type: "avatar"; label: string; value: string; image: HTMLImageElement; x: number; y: number; scale: number; rotation: number; size: number; shape: "circle" | "square"; };
+    | { id: string; type: "text"; label: string; value: string; x: number; y: number; scale: number; rotation: number; color: string; fontSize: number; fontFamily: string; strokeColor: string; strokeWidth: number; }
+    | { id: string; type: "avatar"; label: string; value: string; image: HTMLImageElement; x: number; y: number; scale: number; rotation: number; size: number; shape: "circle" | "square"; }
+    | { id: string; type: "asset"; assetType: "emoji" | "sticker"; label: string; value: string; image: HTMLImageElement; x: number; y: number; scale: number; rotation: number; size: number; };
 
 type GuildUser = { id: string; name: string; username: string; handle: string; nick?: string; avatar: string; };
 type LayerBounds = { width: number; height: number; };
 type HandleName = "delete" | "scale" | "rotate";
 
 const GuildMemberStore = findByPropsLazy("getMember", "getMembers");
+const EmojiStore = findByPropsLazy("getGuildEmoji");
+const StickersStore = findByPropsLazy("getStickersByGuildId");
 const MAX_UPLOAD_BYTES = 9.5 * 1024 * 1024;
 const FONT_OPTIONS = [
     { label: "Impact", value: 'Impact, "Arial Black", sans-serif' },
@@ -142,6 +147,75 @@ function getContextUsers(guildId?: string, channelId?: string) {
     return guildId ? getGuildUsers(guildId) : getDmUsers(channelId);
 }
 
+type DiscordAsset = { id: string; name?: string; label: string; url: string; assetType: "emoji" | "sticker"; animated?: boolean; format_type?: number; };
+const guildAssetCache = new Map<string, DiscordAsset[]>();
+
+function getGuildAssets(guildId?: string): DiscordAsset[] {
+    if (!guildId) return [];
+    const cached = guildAssetCache.get(guildId);
+    if (cached) return cached;
+
+    const emojis = (EmojiStore.getGuildEmoji?.(guildId) ?? []) as any[];
+    const stickers = (StickersStore.getStickersByGuildId?.(guildId) ?? []) as any[];
+    const emojiAssets = emojis
+        .filter(emoji => emoji?.id && emoji.available !== false)
+        .map(emoji => ({
+            id: emoji.id,
+            name: emoji.name,
+            label: `:${emoji.name ?? emoji.id}:`,
+            url: emoji.url ?? `https://cdn.discordapp.com/emojis/${emoji.id}.webp?size=160&lossless=true&animated=true`,
+            assetType: "emoji" as const,
+            animated: emoji.animated
+        }));
+    const stickerAssets = stickers
+        .filter(sticker => sticker?.id && sticker.format_type !== 3)
+        .map(sticker => ({
+            id: sticker.id,
+            name: sticker.name,
+            label: sticker.name ?? sticker.id,
+            url: sticker.url ?? `https://media.discordapp.net/stickers/${sticker.id}.${sticker.format_type === 4 ? "gif" : "png"}?size=160&lossless=true&animated=true`,
+            assetType: "sticker" as const,
+            format_type: sticker.format_type
+        }));
+
+    const assets = [...emojiAssets, ...stickerAssets];
+    if (assets.length > 0) guildAssetCache.set(guildId, assets);
+    return assets;
+}
+
+async function fetchGuildAssets(guildId: string) {
+    const [emojiResponse, stickerResponse] = await Promise.all([
+        RestAPI.get({ url: `/guilds/${guildId}/emojis` }),
+        RestAPI.get({ url: `/guilds/${guildId}/stickers` })
+    ]);
+    const emojis = (emojiResponse.body ?? []) as any[];
+    const stickers = (stickerResponse.body ?? []) as any[];
+    const assets: DiscordAsset[] = [
+        ...emojis
+            .filter(emoji => emoji?.id && emoji.available !== false)
+            .map(emoji => ({
+                id: emoji.id,
+                name: emoji.name,
+                label: `:${emoji.name ?? emoji.id}:`,
+                url: `https://cdn.discordapp.com/emojis/${emoji.id}.webp?size=160&lossless=true&animated=true`,
+                assetType: "emoji" as const,
+                animated: emoji.animated
+            })),
+        ...stickers
+            .filter(sticker => sticker?.id && sticker.format_type !== 3)
+            .map(sticker => ({
+                id: sticker.id,
+                name: sticker.name,
+                label: sticker.name ?? sticker.id,
+                url: `https://media.discordapp.net/stickers/${sticker.id}.${sticker.format_type === 4 ? "gif" : "png"}?size=160&lossless=true&animated=true`,
+                assetType: "sticker" as const,
+                format_type: sticker.format_type
+            }))
+    ];
+    guildAssetCache.set(guildId, assets);
+    return assets;
+}
+
 function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number) {
     return new Promise<Blob>((resolve, reject) => {
         canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("Failed to export meme image")), type, quality);
@@ -243,7 +317,7 @@ function getTextWidth(layer: Extract<Layer, { type: "text"; }>, ctx?: CanvasRend
 }
 
 function getLayerBounds(layer: Layer, ctx?: CanvasRenderingContext2D | null): LayerBounds {
-    if (layer.type === "avatar") {
+    if (layer.type === "avatar" || layer.type === "asset") {
         const size = layer.size * layer.scale;
         return { width: size, height: size };
     }
@@ -289,7 +363,13 @@ function MemeEditorModal({ imageUrl, guildId, channelId, modalProps }: { imageUr
     const [selectedId, setSelectedId] = React.useState<string | null>(null);
     const [userQuery, setUserQuery] = React.useState("");
     const [users, setUsers] = React.useState(() => getContextUsers(guildId, channelId));
+    const [assetQuery, setAssetQuery] = React.useState("");
+    const [assets, setAssets] = React.useState(() => getGuildAssets(guildId));
+    const [assetGuildId, setAssetGuildId] = React.useState(guildId ?? "");
+    const [assetLoading, setAssetLoading] = React.useState(false);
+    const [assetError, setAssetError] = React.useState("");
     const selected = layers.find(layer => layer.id === selectedId);
+    const guilds = React.useMemo(() => Object.values(GuildStore.getGuilds?.() ?? {}) as Array<{ id: string; name: string; }>, []);
     const filteredUsers = React.useMemo(() => {
         const query = userQuery.trim().toLowerCase();
         if (!query) return users.slice(0, 24);
@@ -304,6 +384,11 @@ function MemeEditorModal({ imageUrl, guildId, channelId, modalProps }: { imageUr
             )
             .slice(0, 24);
     }, [userQuery, users]);
+    const filteredAssets = React.useMemo(() => {
+        const query = assetQuery.trim().toLowerCase();
+        if (!query) return assets;
+        return assets.filter(asset => asset.label.toLowerCase().includes(query) || asset.id.includes(query));
+    }, [assetQuery, assets]);
 
     const renderCanvas = React.useCallback(() => {
         const canvas = canvasRef.current;
@@ -329,22 +414,32 @@ function MemeEditorModal({ imageUrl, guildId, channelId, modalProps }: { imageUr
                     ctx.clip();
                 }
                 ctx.drawImage(layer.image, -size / 2, -size / 2, size, size);
+            } else if (layer.type === "asset") {
+                const size = layer.size * layer.scale;
+                ctx.drawImage(layer.image, -size / 2, -size / 2, size, size);
             } else {
                 const fontSize = layer.fontSize * layer.scale;
                 ctx.font = `900 ${fontSize}px ${layer.fontFamily}`;
                 ctx.textAlign = "center";
                 ctx.textBaseline = "middle";
                 ctx.lineJoin = "round";
-                ctx.strokeStyle = "#000";
-                ctx.lineWidth = Math.max(4, fontSize * 0.12);
                 ctx.fillStyle = layer.color;
-                ctx.strokeText(layer.value, 0, 0);
+                ctx.strokeStyle = layer.strokeColor;
+                ctx.lineWidth = layer.strokeWidth * layer.scale;
+                if (layer.strokeWidth > 0) ctx.strokeText(layer.value, 0, 0);
                 ctx.fillText(layer.value, 0, 0);
             }
 
             ctx.restore();
         }
     }, [layers]);
+
+    React.useEffect(() => {
+        setAssetGuildId(guildId ?? "");
+        setAssets(getGuildAssets(guildId));
+        setAssetError("");
+        if (guildId) void loadGuildAssetsForEditor(guildId);
+    }, [guildId]);
 
     React.useEffect(() => {
         let alive = true;
@@ -405,7 +500,9 @@ function MemeEditorModal({ imageUrl, guildId, channelId, modalProps }: { imageUr
             rotation: 0,
             color: "#ffffff",
             fontSize: 54,
-            fontFamily: FONT_OPTIONS[0].value
+            fontFamily: FONT_OPTIONS[0].value,
+            strokeColor: "#000000",
+            strokeWidth: 6
         }]);
         setSelectedId(id);
     }
@@ -430,6 +527,46 @@ function MemeEditorModal({ imageUrl, guildId, channelId, modalProps }: { imageUr
             shape: "circle"
         }]);
         setSelectedId(id);
+    }
+
+    async function addAssetLayer(asset: DiscordAsset) {
+        const canvas = canvasRef.current;
+        if (!asset || !canvas) return;
+
+        try {
+            const image = await loadImage(asset.url);
+            const id = `${asset.assetType ?? "asset"}-${Date.now()}`;
+            setLayers(existing => [...existing, {
+                id,
+                type: "asset",
+                assetType: asset.assetType,
+                label: asset.label,
+                value: asset.url,
+                image,
+                x: canvas.width / 2,
+                y: canvas.height / 2,
+                scale: 1,
+                rotation: 0,
+                size: Math.max(96, Math.min(canvas.width, canvas.height) * 0.18)
+            }]);
+            setSelectedId(id);
+        } catch {
+            // Some animated or unavailable Discord assets cannot be decoded by Canvas.
+        }
+    }
+
+    async function loadGuildAssetsForEditor(targetGuildId: string) {
+        if (!targetGuildId) return;
+        setAssetLoading(true);
+        setAssetError("");
+        try {
+            setAssets(await fetchGuildAssets(targetGuildId));
+        } catch {
+            setAssetError("Could not load this server's emoji and stickers. Check that you can access the server.");
+            setAssets(getGuildAssets(targetGuildId));
+        } finally {
+            setAssetLoading(false);
+        }
     }
 
     function updateSelected(patch: Partial<Layer>) {
@@ -545,7 +682,7 @@ function MemeEditorModal({ imageUrl, guildId, channelId, modalProps }: { imageUr
     return (
         <ModalRoot {...modalProps} size={ModalSize.DYNAMIC} className="vc-meme-editor-modal">
             <ModalHeader>
-                <Forms.FormTitle tag="h2">Meme Editor</Forms.FormTitle>
+                <Heading tag="h2">Meme Editor</Heading>
                 <ModalCloseButton onClick={modalProps.onClose} />
             </ModalHeader>
             <ModalContent>
@@ -599,8 +736,38 @@ function MemeEditorModal({ imageUrl, guildId, channelId, modalProps }: { imageUr
                     </div>
                     <div className="vc-meme-editor-panel">
                         <div className="vc-meme-editor-row">
-                            <span className="vc-meme-editor-label">Text / Emoji</span>
+                            <span className="vc-meme-editor-label">Text</span>
                             <Button onClick={addTextLayer}>Add Text</Button>
+                        </div>
+                        <div className="vc-meme-editor-row">
+                            <span className="vc-meme-editor-label">Server Emoji / Stickers</span>
+                            <div className="vc-meme-editor-inline">
+                                <select className="vc-meme-editor-select" value={assetGuildId} onChange={event => {
+                                    const nextGuildId = event.currentTarget.value;
+                                    setAssetGuildId(nextGuildId);
+                                    void loadGuildAssetsForEditor(nextGuildId);
+                                }}>
+                                    <option value="">Select a server</option>
+                                    {guilds.map(guild => <option key={guild.id} value={guild.id}>{guild.name}</option>)}
+                                </select>
+                            </div>
+                            {assetLoading && <div className="vc-meme-editor-note">Loading server assets…</div>}
+                            {assetError && <div className="vc-meme-editor-note vc-meme-editor-error">{assetError}</div>}
+                            {!assetGuildId && <div className="vc-meme-editor-empty">Select a server to fetch its assets automatically</div>}
+                            {assetGuildId && !assetLoading && assets.length === 0 && !assetError && <div className="vc-meme-editor-empty">This server has no available emoji or stickers.</div>}
+                            {assetGuildId && !assetLoading && assets.length > 0 && <>
+                                <input className="vc-meme-editor-input" value={assetQuery} placeholder="Search by name" onChange={e => setAssetQuery(e.currentTarget.value)} />
+                                <div className="vc-meme-editor-asset-list">
+                                    {filteredAssets.length === 0 && <div className="vc-meme-editor-empty">No matching emoji or stickers found.</div>}
+                                    {filteredAssets.map(asset => (
+                                        <button key={`${asset.assetType}-${asset.id}`} className="vc-meme-editor-asset" onClick={() => addAssetLayer(asset)} title={asset.label}>
+                                            <img src={asset.url} />
+                                            <span>{asset.label}</span>
+                                            <small>{asset.assetType}</small>
+                                        </button>
+                                    ))}
+                                </div>
+                            </>}
                         </div>
                         <div className="vc-meme-editor-row">
                             <span className="vc-meme-editor-label">User Icon</span>
@@ -649,7 +816,7 @@ function MemeEditorModal({ imageUrl, guildId, channelId, modalProps }: { imageUr
                         {selected && (
                             <div className="vc-meme-editor-row">
                                 <span className="vc-meme-editor-label">Layer Options</span>
-                                {selected.type !== "avatar" && (
+                                {selected.type === "text" && (
                                     <>
                                         <input className="vc-meme-editor-input" value={selected.value} onChange={e => updateSelected({ value: e.currentTarget.value, label: e.currentTarget.value || "Text" })} />
                                         <select className="vc-meme-editor-select" value={selected.fontFamily} onChange={e => updateSelected({ fontFamily: e.currentTarget.value })}>
@@ -658,6 +825,10 @@ function MemeEditorModal({ imageUrl, guildId, channelId, modalProps }: { imageUr
                                             ))}
                                         </select>
                                         <input className="vc-meme-editor-input" type="color" value={selected.color} onChange={e => updateSelected({ color: e.currentTarget.value })} />
+                                        <label className="vc-meme-editor-sub-label">Outline color</label>
+                                        <input className="vc-meme-editor-input" type="color" value={selected.strokeColor} onChange={e => updateSelected({ strokeColor: e.currentTarget.value })} />
+                                        <label className="vc-meme-editor-sub-label">Outline width: {selected.strokeWidth}px</label>
+                                        <input className="vc-meme-editor-range" type="range" min="0" max="40" step="1" value={selected.strokeWidth} onChange={e => updateSelected({ strokeWidth: Number(e.currentTarget.value) })} />
                                     </>
                                 )}
                                 {selected.type === "avatar" && (
@@ -666,6 +837,7 @@ function MemeEditorModal({ imageUrl, guildId, channelId, modalProps }: { imageUr
                                         <option value="square">Original square</option>
                                     </select>
                                 )}
+                                {selected.type === "asset" && <div className="vc-meme-editor-note">Discord {selected.assetType} image. Animated assets are flattened to the first frame when supported by Canvas.</div>}
                             </div>
                         )}
                     </div>
